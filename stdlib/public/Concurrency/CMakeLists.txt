@@ -13,6 +13,8 @@
 add_swift_target_library(swift_Concurrency ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} IS_STDLIB
   Actor.swift
   PartialAsyncTask.swift
+  Task.cpp
+  TaskAlloc.cpp
   TaskStatus.cpp
   Mutex.cpp
 
@@ -25,7 +27,7 @@ add_swift_target_library(swift_Concurrency ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} I
   SWIFT_MODULE_DEPENDS_OPENBSD Glibc
   SWIFT_MODULE_DEPENDS_CYGWIN Glibc
   SWIFT_MODULE_DEPENDS_HAIKU Glibc
-  SWIFT_MODULE_DEPENDS_WINDOWS MSVCRT
+  SWIFT_MODULE_DEPENDS_WINDOWS CRT
 
   LINK_LIBRARIES swiftCore
 

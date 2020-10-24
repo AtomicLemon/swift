@@ -66,11 +66,17 @@ class SolutionApplicationTarget;
 
 } // end namespace constraints
 
+namespace unittest {
+
+class SemaTest;
+
+} // end namespace unittest
+
 // Forward declare some TypeChecker related functions
 // so they could be made friends of ConstraintSystem.
 namespace TypeChecker {
 
-Optional<BraceStmt *> applyFunctionBuilderBodyTransform(FuncDecl *func,
+Optional<BraceStmt *> applyResultBuilderBodyTransform(FuncDecl *func,
                                                         Type builderType);
 
 Optional<constraints::SolutionApplicationTarget>
@@ -804,7 +810,7 @@ enum ScoreKind {
 /// The number of score kinds.
 const unsigned NumScoreKinds = SK_LastScoreKind + 1;
 
-/// Describes what happened when a function builder transform was applied
+/// Describes what happened when a result builder transform was applied
 /// to a particular closure.
 struct AppliedBuilderTransform {
   /// The builder type that was applied to the closure.
@@ -1178,9 +1184,9 @@ public:
   std::vector<std::pair<ConstraintLocator *, ProtocolConformanceRef>>
       Conformances;
 
-  /// The set of functions that have been transformed by a function builder.
+  /// The set of functions that have been transformed by a result builder.
   llvm::MapVector<AnyFunctionRef, AppliedBuilderTransform>
-      functionBuilderTransformed;
+      resultBuilderTransformed;
 
   /// Simplify the given type by substituting all occurrences of
   /// type variables for their fixed types.
@@ -1294,8 +1300,8 @@ public:
   /// Retrieve the builder transform that was applied to this function, if any.
   const AppliedBuilderTransform *getAppliedBuilderTransform(
      AnyFunctionRef fn) const {
-    auto known = functionBuilderTransformed.find(fn);
-    return known != functionBuilderTransformed.end()
+    auto known = resultBuilderTransformed.find(fn);
+    return known != resultBuilderTransformed.end()
         ? &known->second
         : nullptr;
   }
@@ -2018,6 +2024,8 @@ enum class SolutionApplicationToFunctionResult {
 class ConstraintSystem {
   ASTContext &Context;
 
+  friend class swift::unittest::SemaTest;
+
 public:
   DeclContext *DC;
   ConstraintSystemOptions Options;
@@ -2117,12 +2125,12 @@ private:
   /// from declared parameters/result and body.
   llvm::MapVector<const ClosureExpr *, FunctionType *> ClosureTypes;
 
-  /// This is a *global* list of all function builder bodies that have
+  /// This is a *global* list of all result builder bodies that have
   /// been determined to be incorrect by failing constraint generation.
   ///
   /// Tracking this information is useful to avoid producing duplicate
-  /// diagnostics when function builder has multiple overloads.
-  llvm::SmallDenseSet<AnyFunctionRef> InvalidFunctionBuilderBodies;
+  /// diagnostics when result builder has multiple overloads.
+  llvm::SmallDenseSet<AnyFunctionRef> InvalidResultBuilderBodies;
 
   /// Maps node types used within all portions of the constraint
   /// system, instead of directly using the types on the
@@ -2210,9 +2218,9 @@ private:
   std::vector<std::pair<ConstraintLocator *, ProtocolConformanceRef>>
       CheckedConformances;
 
-  /// The set of functions that have been transformed by a function builder.
+  /// The set of functions that have been transformed by a result builder.
   std::vector<std::pair<AnyFunctionRef, AppliedBuilderTransform>>
-      functionBuilderTransformed;
+      resultBuilderTransformed;
 
   /// Cache of the effects any closures visited.
   llvm::SmallDenseMap<ClosureExpr *, FunctionType::ExtInfo, 4> closureEffectsCache;
@@ -2547,7 +2555,7 @@ public:
 
     case ConstraintSystemPhase::Solving:
       // We can come back to constraint generation phase while
-      // processing function builder body.
+      // processing result builder body.
       assert(newPhase == ConstraintSystemPhase::ConstraintGeneration ||
              newPhase == ConstraintSystemPhase::Diagnostics ||
              newPhase == ConstraintSystemPhase::Finalization);
@@ -2679,7 +2687,7 @@ public:
 
     unsigned numFavoredConstraints;
 
-    unsigned numFunctionBuilderTransformed;
+    unsigned numResultBuilderTransformed;
 
     /// The length of \c ResolvedOverloads.
     unsigned numResolvedOverloads;
@@ -2751,7 +2759,7 @@ private:
 
   // FIXME: Perhaps these belong on ConstraintSystem itself.
   friend Optional<BraceStmt *>
-  swift::TypeChecker::applyFunctionBuilderBodyTransform(FuncDecl *func,
+  swift::TypeChecker::applyResultBuilderBodyTransform(FuncDecl *func,
                                                         Type builderType);
 
   friend Optional<SolutionApplicationTarget>
@@ -4595,11 +4603,11 @@ public:
   /// Simplify the given disjunction choice.
   void simplifyDisjunctionChoice(Constraint *choice);
 
-  /// Apply the given function builder to the closure expression.
+  /// Apply the given result builder to the closure expression.
   ///
-  /// \returns \c None when the function builder cannot be applied at all,
-  /// otherwise the result of applying the function builder.
-  Optional<TypeMatchResult> matchFunctionBuilder(
+  /// \returns \c None when the result builder cannot be applied at all,
+  /// otherwise the result of applying the result builder.
+  Optional<TypeMatchResult> matchResultBuilder(
       AnyFunctionRef fn, Type builderType, Type bodyResultType,
       ConstraintKind bodyResultConstraintKind,
       ConstraintLocatorBuilder locator);
@@ -4705,7 +4713,11 @@ private:
     SmallVector<PotentialBinding, 4> Bindings;
 
     /// The set of protocol requirements placed on this type variable.
-    llvm::TinyPtrVector<Constraint *> Protocols;
+    llvm::SmallVector<Constraint *, 4> Protocols;
+
+    /// The set of transitive protocol requirements inferred through
+    /// subtype/conversion/equivalence relations with other type variables.
+    Optional<llvm::SmallPtrSet<Constraint *, 4>> TransitiveProtocols;
 
     /// The set of constraints which would be used to infer default types.
     llvm::TinyPtrVector<Constraint *> Defaults;
@@ -4740,15 +4752,13 @@ private:
     /// Tracks the position of the last known supertype in the group.
     Optional<unsigned> lastSupertypeIndex;
 
-    /// A set of all constraints which contribute to pontential bindings.
-    llvm::SmallPtrSet<Constraint *, 8> Sources;
-
     /// A set of all not-yet-resolved type variables this type variable
-    /// is a subtype of. This is used to determine ordering inside a
-    /// chain of subtypes because binding inference algorithm can't,
-    /// at the moment, determine bindings transitively through supertype
-    /// type variables.
-    llvm::SmallPtrSet<TypeVariableType *, 4> SubtypeOf;
+    /// is a subtype of, supertype of or is equivalent to. This is used
+    /// to determine ordering inside of a chain of subtypes to help infer
+    /// transitive bindings  and protocol requirements.
+    llvm::SmallMapVector<TypeVariableType *, Constraint *, 4> SubtypeOf;
+    llvm::SmallMapVector<TypeVariableType *, Constraint *, 4> SupertypeOf;
+    llvm::SmallMapVector<TypeVariableType *, Constraint *, 4> EquivalentTo;
 
     PotentialBindings(TypeVariableType *typeVar)
         : TypeVar(typeVar), PotentiallyIncomplete(isGenericParameter()) {}
@@ -4793,10 +4803,10 @@ private:
       // This is required because algorithm can't currently infer
       // bindings for subtype transitively through superclass ones.
       if (!(x.IsHole && y.IsHole)) {
-        if (x.SubtypeOf.count(y.TypeVar))
+        if (x.isSubtypeOf(y.TypeVar))
           return false;
 
-        if (y.SubtypeOf.count(x.TypeVar))
+        if (y.isSubtypeOf(x.TypeVar))
           return true;
       }
 
@@ -4842,6 +4852,15 @@ private:
       return false;
     }
 
+    bool isSubtypeOf(TypeVariableType *typeVar) const {
+      auto result = SubtypeOf.find(typeVar);
+      if (result == SubtypeOf.end())
+        return false;
+
+      auto *constraint = result->second;
+      return constraint->getKind() == ConstraintKind::Subtype;
+    }
+
     /// Check if this binding is favored over a disjunction e.g.
     /// if it has only concrete types or would resolve a closure.
     bool favoredOverDisjunction(Constraint *disjunction) const;
@@ -4865,6 +4884,15 @@ private:
                                   ConstraintSystem::PotentialBindings>
             &inferredBindings);
 
+    /// Detect subtype, conversion or equivalence relationship
+    /// between two type variables and attempt to propagate protocol
+    /// requirements down the subtype or equivalence chain.
+    void inferTransitiveProtocolRequirements(
+        const ConstraintSystem &cs,
+        llvm::SmallDenseMap<TypeVariableType *,
+                            ConstraintSystem::PotentialBindings>
+            &inferredBindings);
+
     /// Infer bindings based on any protocol conformances that have default
     /// types.
     void inferDefaultTypes(ConstraintSystem &cs,
@@ -4878,8 +4906,8 @@ public:
     /// Finalize binding computation for this type variable by
     /// inferring bindings from context e.g. transitive bindings.
     void finalize(ConstraintSystem &cs,
-                  const llvm::SmallDenseMap<TypeVariableType *,
-                                            ConstraintSystem::PotentialBindings>
+                  llvm::SmallDenseMap<TypeVariableType *,
+                                      ConstraintSystem::PotentialBindings>
                       &inferredBindings);
 
     void dump(llvm::raw_ostream &out,
@@ -5379,7 +5407,10 @@ public:
   /// indices.
   ///
   /// \param paramIdx The index of the parameter that is missing an argument.
-  virtual Optional<unsigned> missingArgument(unsigned paramIdx);
+  /// \param argInsertIdx The index in the argument list where this argument was
+  /// expected.
+  virtual Optional<unsigned> missingArgument(unsigned paramIdx,
+                                             unsigned argInsertIdx);
 
   /// Indicate that there was no label given when one was expected by parameter.
   ///
@@ -5959,7 +5990,7 @@ bool isSIMDOperator(ValueDecl *value);
 
 std::string describeGenericType(ValueDecl *GP, bool includeName = false);
 
-/// Apply the given function builder transform within a specific solution
+/// Apply the given result builder transform within a specific solution
 /// to produce the rewritten body.
 ///
 /// \param solution The solution to use during application, providing the
@@ -5971,7 +6002,7 @@ std::string describeGenericType(ValueDecl *GP, bool includeName = false);
 /// type-checked version.
 ///
 /// \returns the transformed body
-BraceStmt *applyFunctionBuilderTransform(
+BraceStmt *applyResultBuilderTransform(
     const constraints::Solution &solution,
     constraints::AppliedBuilderTransform applied,
     BraceStmt *body,

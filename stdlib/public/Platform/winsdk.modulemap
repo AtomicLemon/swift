@@ -282,6 +282,11 @@ module WinSDK [system] {
       header "winioctl.h"
       export *
     }
+
+    module MCX {
+      header "mcx.h"
+      export *
+    }
   }
 
   module OLE32 {
@@ -371,6 +376,16 @@ module WinSDK [system] {
     export *
 
     link "AdvAPI32.Lib"
+  }
+
+  // TODO(compnerd) does it make sense to implicitly export this API surface?
+  // It seems to be meant for device drivers.
+  module WLANAPI {
+    header "wlanapi.h"
+    header "wlanihv.h"
+    header "wlclient.h"
+
+    link "wlanapi.lib"
   }
 }
 

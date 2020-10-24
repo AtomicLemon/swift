@@ -493,8 +493,8 @@ SIMPLE_DECL_ATTR(_disfavoredOverload, DisfavoredOverload,
   OnAbstractFunction | OnVar | OnSubscript | UserInaccessible |
   ABIStableToAdd | ABIStableToRemove | APIStableToAdd | APIStableToRemove,
   87)
-SIMPLE_DECL_ATTR(_functionBuilder, FunctionBuilder,
-  OnNominalType | UserInaccessible |
+SIMPLE_DECL_ATTR(resultBuilder, ResultBuilder,
+  OnNominalType |
   ABIStableToAdd | ABIStableToRemove | APIStableToAdd | APIStableToRemove,
   88)
 DECL_ATTR(_projectedValueProperty, ProjectedValueProperty,
@@ -571,7 +571,7 @@ CONTEXTUAL_SIMPLE_DECL_ATTR(actor, Actor,
   APIBreakingToAdd | APIBreakingToRemove,
   102)
 
-SIMPLE_DECL_ATTR(actorIndependent, ActorIndependent,
+DECL_ATTR(actorIndependent, ActorIndependent,
   OnFunc | OnVar | OnSubscript | ConcurrencyOnly |
   ABIStableToAdd | ABIStableToRemove |
   APIStableToAdd | APIBreakingToRemove,
